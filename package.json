@@ -1,0 +1,75 @@
+{
+  "name": "@cesarvenzac/figures",
+  "version": "0.1.0",
+  "description": "Small 3D figures for the agents in your interface: a cube, a sphere, a pyramid, a block or a cloud with two eyes, saying what each is doing with their eyes and the way they move.",
+  "keywords": [
+    "agents",
+    "ai-agents",
+    "avatar",
+    "avatars",
+    "character",
+    "mascot",
+    "bot",
+    "figure",
+    "status",
+    "expression",
+    "eyes",
+    "3d",
+    "webgl",
+    "webgl2",
+    "shader",
+    "raymarching",
+    "animation",
+    "react"
+  ],
+  "homepage": "https://cesarvenzac.com/figures",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/cesarvenzac/figures.git"
+  },
+  "bugs": "https://github.com/cesarvenzac/figures/issues",
+  "author": "César Venzac (https://cesarvenzac.com)",
+  "license": "MIT",
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./react": {
+      "types": "./dist/react.d.ts",
+      "default": "./dist/react.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "rm -rf dist && tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "check": "sh check/run.sh",
+    "prepublishOnly": "npm run build"
+  },
+  "peerDependencies": {
+    "react": ">=18"
+  },
+  "peerDependenciesMeta": {
+    "react": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
+    "typescript": "^5.9.3",
+    "vitest": "^5.0.3"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}
