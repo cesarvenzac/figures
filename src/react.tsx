@@ -34,7 +34,7 @@ import {
 } from "./figure.ts";
 import { actLoopAt } from "./figure-acts.ts";
 import { easeInOut, span } from "./figure-curves.ts";
-import { canDraw, drawFigure, MOST_PIXELS, onRestored } from "./figure-gl.ts";
+import { drawFigure, MOST_PIXELS, NOT_YET, shaderState, watchShader } from "./figure-gl.ts";
 import { animate } from "./figure-loop.ts";
 import { bodyLoopAt, combine, type LoopAct, loopActAt, moveAt, REST_YAW, stopFor, SWITCH_AT, thinkingAt, THINKING_CYCLE, TURN_BY } from "./figure-motion.ts";
 import { eventToWatch, gazeAt, glanceTarget, type Peer, WATCH_FOR, watchedBy } from "./figure-peers.ts";
@@ -58,6 +58,9 @@ const subscribeToMotion = (callback: () => void) => {
 };
 /** Whether the visitor asked for less motion: false on the server and while hydrating, then their setting, kept current. */
 const useReducedMotion = () => useSyncExternalStore(subscribeToMotion, () => window.matchMedia(REDUCE).matches, () => false);
+
+/** Where the page's shader stands (figure-gl.ts): being made ready, as the server has it, until the browser says. */
+const useShader = () => useSyncExternalStore(watchShader, shaderState, () => NOT_YET);
 
 /** True while the element is in the viewport and the tab is in front. */
 function useOnScreen(ref: RefObject<Element | null>) {
@@ -156,8 +159,12 @@ function paletteOf(colours: Colourway) {
   return made;
 }
 
+/** How long the 3D drawing takes to fade in, over the flat one when that was there, in ms. */
+const FADE = 300;
+const FADING = `opacity ${FADE}ms cubic-bezier(0.22, 1, 0.36, 1)`;
 /** The canvas's own styles, overhanging the figure's box on every side and letting the pointer through; it fades in once it has drawn. */
-const CANVAS_STYLE: CSSProperties = { position: "absolute", left: "-25%", top: "-25%", width: "150%", height: "150%", pointerEvents: "none", opacity: 0, transition: "opacity 300ms cubic-bezier(0.22, 1, 0.36, 1)" };
+const CANVAS_STYLE: CSSProperties = { position: "absolute", left: "-25%", top: "-25%", width: "150%", height: "150%", pointerEvents: "none", opacity: 0, transition: FADING };
+const LIT_STYLE: CSSProperties = { ...CANVAS_STYLE, opacity: 1 };
 
 const wait = (from: number, to: number) => from + Math.random() * (to - from);
 const sprungFrom = (look: Look) => Object.fromEntries(LOOK_KEYS.map((key) => [key, { value: look[key], velocity: 0 }])) as Record<keyof Look, Sprung>;
@@ -216,9 +223,11 @@ type Sim = {
  * (`COLOURWAYS`) unless `colours` says otherwise, and its eyes `INK` unless `ink` does: any CSS
  * colours, a custom property (`var(--name)`) read from the page's root once. All of it is worked
  * out by figure-motion.ts, figure-acts.ts and figure-scene.ts on one frame loop for the page
- * (figure-loop.ts); a still figure (`still`, reduced motion, off screen) is drawn once. Where
- * there's no WebGL 2 it's a flat drawing instead. A drawing, hidden from assistive tech: the words beside it say who it is and
- * what it's doing.
+ * (figure-loop.ts); a still figure (`still`, reduced motion, off screen) is drawn once. Until the
+ * page's shader is ready (made ready without holding up the page: figure-gl.ts), it's its flat
+ * drawing, fading into the 3D one where it stands once that's drawn; where there's no WebGL 2 it
+ * stays flat. A drawing, hidden from assistive tech: the words beside it say who it is and what
+ * it's doing.
  */
 export function AgentFigure({
   figure,
@@ -270,7 +279,20 @@ export function AgentFigure({
   const onScreen = useOnScreen(ref);
   const reduced = useReducedMotion();
   const moving = onScreen && !reduced && !still;
-  const [flat, setFlat] = useState(false);
+  const shader = useShader();
+  const ready = shader.readiness === "ready";
+  const generation = shader.generation;
+  // A canvas that can't be drawn on: the flat drawing, for good.
+  const [broken, setBroken] = useState(false);
+  const usable = shader.readiness !== "unavailable" && !broken;
+  // The shader's generation the canvas has drawn in, and the one whose fade has ended: the flat
+  // drawing stands in until then (from the server on, and while a lost context comes back), except
+  // for a figure that first came once the shader was ready, which fades in from nothing as before.
+  const [litIn, setLitIn] = useState(0);
+  const [shownIn, setShownIn] = useState(() => (ready ? generation : 0));
+  const lit = usable && ready && litIn === generation;
+  const flat = !usable || !ready || shownIn !== generation;
+  const litRef = useRef(0);
   const [ratio, setRatio] = useState(2);
   const [override, setOverride] = useState<Expression | null>(null);
   const state = MOOD[mood];
@@ -397,21 +419,27 @@ export function AgentFigure({
       s.scene,
     );
     if (!drawFigure(canvas, s.scene)) return false;
-    if (canvas.dataset.lit === undefined) {
-      canvas.dataset.lit = "";
-      canvas.style.opacity = "1";
+    if (litRef.current !== generation) {
+      litRef.current = generation;
+      setLitIn(generation);
     }
     return true;
   };
+  /** Drawn, or the flat drawing for good where the shader is ready and the canvas still can't be drawn on. */
+  const drawOrBreak = (now: number, open?: number) => {
+    if (!draw(now, open) && shaderState().readiness === "ready") setBroken(true);
+  };
 
-  // A still figure, drawn once as its expression has it (and again if the context comes back).
+  // Once the 3D drawing has faded in, the flat one goes.
   useEffect(() => {
-    if (moving) return;
-    if (!canDraw()) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect -- whether the browser can draw it is only known here.
-      setFlat(true);
-      return;
-    }
+    if (!lit || shownIn === generation) return;
+    const timer = setTimeout(() => setShownIn(generation), FADE);
+    return () => clearTimeout(timer);
+  }, [lit, shownIn, generation]);
+
+  // A still figure, drawn once as its expression has it, once the shader is ready (and again if the context comes back).
+  useEffect(() => {
+    if (moving || !ready || broken) return;
     const s = sim.current;
     s.face = { ...FACES[expression] };
     s.glyphFrom = s.glyphTo = FACES[expression].glyph;
@@ -419,11 +447,10 @@ export function AgentFigure({
     s.look = sprungFrom(off ? OFF_LOOK : LOOKS[expression]);
     s.playing = null;
     s.trail = null;
-    const redraw = () => draw(performance.now());
-    redraw();
-    return onRestored(redraw);
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- whether the canvas drew (and so fades in) is only known once it has.
+    drawOrBreak(performance.now());
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [moving, expression, figure.shape, paint, off, pixels, drain]);
+  }, [moving, ready, generation, broken, expression, figure.shape, paint, off, pixels, drain]);
 
   // A new shape starts from its own front.
   useEffect(() => {
@@ -477,12 +504,7 @@ export function AgentFigure({
   // glows and flows, it makes its moves, and it's drawn, every frame while something's happening
   // and every other one while it only breathes.
   useEffect(() => {
-    if (!moving) return;
-    if (!canDraw()) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect -- whether the browser can draw it is only known here.
-      setFlat(true);
-      return;
-    }
+    if (!moving || !ready || broken) return;
     const s = sim.current;
     const face = FACES[expression];
     const target = off ? OFF_LOOK : LOOKS[expression];
@@ -607,10 +629,10 @@ export function AgentFigure({
       const walking = (liftRef.current?.(now) ?? 0) > 0;
       const busy = s.playing || acting || s.queued || now < s.busyUntil || now < hover.current.until || now < w.until || s.drag.held || Math.abs(s.drag.yaw.value) > 0.5 || pointerFresh || walking;
       if (!busy && frames % 2) return;
-      if (!draw(now, open)) setFlat(true);
+      drawOrBreak(now, open);
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [moving, expression, figure.shape, figure.habit, paint, energy.speed, energy.amp, off, pixels, drain]);
+  }, [moving, ready, generation, broken, expression, figure.shape, figure.habit, paint, energy.speed, energy.amp, off, pixels, drain]);
 
   // A move asked for from outside, as it arrives.
   useEffect(() => {
@@ -822,7 +844,8 @@ export function AgentFigure({
         ...style,
       }}
     >
-      {flat ? <FlatFigure figure={figure} expression={expression} off={off} colours={colours} ink={ink} /> : <canvas ref={canvasRef} width={pixels} height={pixels} style={CANVAS_STYLE} />}
+      {flat ? <FlatFigure figure={figure} expression={expression} off={off} colours={colours} ink={ink} shown={!lit} /> : null}
+      {usable ? <canvas ref={canvasRef} width={pixels} height={pixels} data-lit={lit ? "" : undefined} style={lit ? LIT_STYLE : CANVAS_STYLE} /> : null}
     </div>
   );
 }
@@ -834,15 +857,15 @@ function trailStep(current: Sprung, target: number, dt: number): Sprung {
   return { value: current.value + velocity * dt, velocity };
 }
 
-/** The figure flat, seen from the front, where there's no WebGL 2 to draw it. */
-function FlatFigure({ figure, expression, off, colours, ink }: { figure: Figure; expression: Expression; off: boolean; colours: Colourway; ink: string }) {
+/** The figure flat, seen from the front: where there's no WebGL 2 to draw it, and until the shader is ready. It fades out as the 3D drawing fades in over it (`shown`). */
+function FlatFigure({ figure, expression, off, colours, ink, shown }: { figure: Figure; expression: Expression; off: boolean; colours: Colourway; ink: string; shown: boolean }) {
   const id = useId();
   const art = FLAT[figure.shape];
   const face = FACES[expression];
   const [fx, fy] = art.face;
   const { w, h, gap } = art.eye;
   return (
-    <svg viewBox="0 0 100 100" className="figure-flat" style={{ display: "block", width: "100%", height: "100%", ...(off ? { filter: "grayscale(1)", opacity: 0.7 } : null) }}>
+    <svg viewBox="0 0 100 100" className="figure-flat" style={{ position: "absolute", inset: 0, display: "block", width: "100%", height: "100%", opacity: shown ? (off ? 0.7 : 1) : 0, transition: FADING, ...(off ? { filter: "grayscale(1)" } : null) }}>
       <defs>
         <linearGradient id={`${id}-body`} x1="0.15" y1="0.1" x2="0.85" y2="0.95">
           <stop offset="0" style={{ stopColor: colours.light }} />

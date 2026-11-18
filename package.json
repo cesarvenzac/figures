@@ -1,6 +1,6 @@
 {
   "name": "@cesarvenzac/figures",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Small 3D figures for the agents in your interface: a cube, a sphere, a pyramid, a block or a cloud with two eyes, saying what each is doing with their eyes and the way they move.",
   "keywords": [
     "agents",

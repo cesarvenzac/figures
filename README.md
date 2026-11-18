@@ -91,8 +91,9 @@ to look, and now and then one glances at whichever is busy. A hover on a link or
 figure is in makes it smile; to react to another element's hover, mark it `data-figure-host`.
 
 It's a drawing, hidden from assistive tech: put words beside it saying who it is and what it's
-doing. It holds still under reduced motion and while it's off screen, and where there's no WebGL 2
-it's a flat drawing instead.
+doing. It holds still under reduced motion and while it's off screen. Until its shader is ready
+it's a flat drawing, from the server on, which the 3D one fades in over where it stands; where
+there's no WebGL 2 it stays flat.
 
 ## Colours
 
@@ -127,6 +128,12 @@ Every figure on a page is drawn by one WebGL 2 context, raymarching the shapes i
 shader, and copied onto its own canvas; the canvas is at most 512 device pixels across, and a
 figure is drawn every frame only while something happens, every other frame while it only
 breathes, and not at all off screen. They all share one frame loop and one pointer listener.
+
+The shader is big, and a slow or software driver takes seconds over it (headless Chromium's
+SwiftShader spends two on its first draw), so it's made ready without holding up the page: compiled
+with `KHR_parallel_shader_compile` where the browser has it, else once the page is idle, then drawn
+once on a single pixel, each step waited for a frame at a time, never asked about before it's done.
+The page answers throughout; the figures show their flat drawings meanwhile.
 
 ## Development
 

@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.1
+
+The first figure on a page no longer holds the page up while its shader compiles.
+
+- The shader is made ready without blocking the main thread: compiled with `KHR_parallel_shader_compile` where the browser has it, else once the page is idle, then drawn once on a single pixel, each step waited for a frame at a time. On slow or software drivers (headless Chromium's SwiftShader spends two seconds on the first draw), the page used to freeze for seconds; it now answers throughout.
+- Until the shader is ready, each figure is its flat drawing, rendered from the server on, and the 3D drawing fades in over it where it stands, nothing moving. Where there's no WebGL 2 it stays flat, as before.
+- A lost WebGL context shows the flat drawings until it's back, then fades the figures in again.
+
 ## 0.1.0
 
 The first version: the figures of the agents on cesarvenzac.com, as a library.

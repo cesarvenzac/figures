@@ -21,8 +21,8 @@ import { BODY, CAMERA, type FigureScene, MOST } from "./figure-space.ts";
  * the sphere's size, ripples and moons, the cloud's puffs and raindrops. In front of it, hearts,
  * stars, z's and sparks; behind and under a cloud, its rainbow and its lightning. One WebGL 2 context for every figure on the
  * page (a browser keeps only a few): each figure is drawn into it and copied onto its own canvas
- * straight away. Where WebGL 2 is missing or lost, `drawFigure` says so and the figure keeps its
- * still drawing.
+ * straight away. The shader is made ready without holding up the page (`prepare`), and until it
+ * is, or where WebGL 2 is missing or lost, the figures show their flat drawings (`shaderState`).
  */
 
 /** The largest figure drawn, in device pixels; a bigger one is drawn at this and scaled. */
@@ -799,59 +799,157 @@ const NAMES: Uniform[] = [
 
 type Renderer = { gl: WebGL2RenderingContext; at: Record<Uniform, WebGLUniformLocation | null> };
 
-/** Not tried yet (undefined), unavailable (null), or ready. */
-let renderer: Renderer | null | undefined;
-const contexts = new WeakMap<HTMLCanvasElement, CanvasRenderingContext2D | null>();
-const restored = new Set<() => void>();
+/** What `prepare` waits for between its steps: a moment the page is idle, or the next frame. */
+export type Wait = "idle" | "frame";
 
-function compile(gl: WebGL2RenderingContext, type: number, source: string) {
-  const shader = gl.createShader(type);
-  if (!shader) return null;
-  gl.shaderSource(shader, source);
-  gl.compileShader(shader);
-  if (gl.getShaderParameter(shader, gl.COMPILE_STATUS)) return shader;
-  console.error(gl.getShaderInfoLog(shader));
-  return null;
-}
-
-function create(): Renderer | null {
-  if (typeof document === "undefined") return null;
-  const canvas = document.createElement("canvas");
-  canvas.width = canvas.height = MOST_PIXELS;
-  const gl = canvas.getContext("webgl2", { alpha: true, premultipliedAlpha: true, antialias: false, depth: false, stencil: false, preserveDrawingBuffer: false });
-  if (!gl) return null;
-  const vertex = compile(gl, gl.VERTEX_SHADER, VERTEX);
-  const fragment = compile(gl, gl.FRAGMENT_SHADER, FRAGMENT);
+/**
+ * The shader made ready without holding up the page, a step at a time: `prepare` yields what to
+ * wait for before its next step, and never asks the context anything it would have to wait for.
+ *
+ * A browser hands its WebGL calls to a GPU process and answers a question about them (did it
+ * compile? what does it draw?) only once the work is done, holding the page's main thread
+ * meanwhile. This shader is big: a slow or software driver takes seconds over it (SwiftShader, as
+ * headless Chromium has it, compiles it in 30 ms and then 2 s more over the first draw, making the
+ * pipeline). So nothing is asked until it's done. With `KHR_parallel_shader_compile` the program
+ * is compiled and linked at once and its completion asked each frame, which never waits. Without
+ * it, the compile starts once the page is idle, so it isn't inside the first render, with a fence
+ * behind it, which says each frame whether the work before it is done, again without waiting.
+ * Then a first draw, on one pixel, behind a fence of its own: the pipeline is made there. Only
+ * then is the program used, and drawing a figure costs what drawing it costs.
+ *
+ * Returns the renderer, or null when the shader doesn't compile here (it says why on the console).
+ */
+export function* prepare(gl: WebGL2RenderingContext): Generator<Wait, Renderer | null, void> {
+  const parallel = gl.getExtension("KHR_parallel_shader_compile") as { COMPLETION_STATUS_KHR: number } | null;
+  if (!parallel) yield "idle";
+  const vertex = gl.createShader(gl.VERTEX_SHADER);
+  const fragment = gl.createShader(gl.FRAGMENT_SHADER);
   const program = gl.createProgram();
   if (!vertex || !fragment || !program) return null;
+  gl.shaderSource(vertex, VERTEX);
+  gl.compileShader(vertex);
+  gl.shaderSource(fragment, FRAGMENT);
+  gl.compileShader(fragment);
   gl.attachShader(program, vertex);
   gl.attachShader(program, fragment);
   gl.linkProgram(program);
-  if (!gl.getProgramParameter(program, gl.LINK_STATUS)) return null;
+  if (parallel) {
+    gl.flush();
+    while (!gl.getProgramParameter(program, parallel.COMPLETION_STATUS_KHR)) yield "frame";
+  } else yield* fenced(gl);
+  if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+    for (const shader of [vertex, fragment]) if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) console.error(gl.getShaderInfoLog(shader));
+    console.error(gl.getProgramInfoLog(program));
+    return null;
+  }
   gl.useProgram(program);
   const at = Object.fromEntries(NAMES.map((name) => [name, gl.getUniformLocation(program, name)])) as Renderer["at"];
-  canvas.addEventListener("webglcontextlost", (event) => {
-    event.preventDefault();
-    renderer = null;
-  });
-  canvas.addEventListener("webglcontextrestored", () => {
-    renderer = undefined;
-    for (const redraw of restored) redraw();
-  });
+  // The first draw, where a driver makes the pipeline: one pixel, as every figure is drawn.
+  gl.viewport(0, 0, 1, 1);
+  gl.uniform2f(at.uSize, 1, 1);
+  gl.drawArrays(gl.TRIANGLES, 0, 3);
+  yield* fenced(gl);
   return { gl, at };
 }
 
-/** Whether figures can be drawn here at all (WebGL 2, and the shader compiled). */
-export function canDraw() {
-  if (renderer === undefined) renderer = create();
-  return Boolean(renderer && !renderer.gl.isContextLost());
+/** Waits, a frame at a time, until the context has done everything asked of it so far. */
+function* fenced(gl: WebGL2RenderingContext): Generator<Wait, void, void> {
+  const sync = gl.fenceSync(gl.SYNC_GPU_COMMANDS_COMPLETE, 0);
+  gl.flush();
+  if (!sync) return;
+  // A fence's status changes only between tasks: it's asked a frame later at the soonest.
+  yield "frame";
+  while (gl.getSyncParameter(sync, gl.SYNC_STATUS) !== gl.SIGNALED) yield "frame";
+  gl.deleteSync(sync);
 }
 
-/** Draws a figure's scene onto `target` (its own canvas, in device pixels). False when there's no WebGL 2, or it was lost. */
+/**
+ * Where the page's shader stands: being made ready (`compiling`: the figures show their flat
+ * drawings meanwhile), `ready`, or `unavailable` (no WebGL 2, or it didn't compile). `generation`
+ * counts the times it became ready: a lost context comes back as a new one, drawn into afresh.
+ */
+export type ShaderState = { readiness: "compiling" | "ready" | "unavailable"; generation: number };
+
+/** How things stand before anything's tried, as the server draws a figure. */
+export const NOT_YET: ShaderState = { readiness: "compiling", generation: 0 };
+
+let state = NOT_YET;
+let renderer: Renderer | null = null;
+/** Whether the shared canvas was made (or found impossible). */
+let started = false;
+/** Which preparation is under way; one started before a lost context is let go. */
+let preparing = 0;
+const watchers = new Set<() => void>();
+const contexts = new WeakMap<HTMLCanvasElement, CanvasRenderingContext2D | null>();
+
+function moveTo(readiness: ShaderState["readiness"]) {
+  state = { readiness, generation: state.generation + (readiness === "ready" ? 1 : 0) };
+  // Told after the current task: a watcher may be in the middle of subscribing.
+  queueMicrotask(() => {
+    for (const watcher of watchers) watcher();
+  });
+}
+
+const later = (wait: Wait, step: () => void) => {
+  if (wait === "frame") requestAnimationFrame(step);
+  else if (typeof requestIdleCallback === "function") requestIdleCallback(step, { timeout: 1000 });
+  else setTimeout(step, 100);
+};
+
+function run(gl: WebGL2RenderingContext) {
+  const mine = ++preparing;
+  renderer = null;
+  const steps = prepare(gl);
+  const step = () => {
+    if (mine !== preparing) return;
+    if (gl.isContextLost()) return;
+    const next = steps.next();
+    if (!next.done) return later(next.value, step);
+    renderer = next.value;
+    moveTo(renderer ? "ready" : "unavailable");
+  };
+  step();
+}
+
+function start() {
+  if (started) return;
+  started = true;
+  const canvas = typeof document === "undefined" ? null : document.createElement("canvas");
+  if (canvas) canvas.width = canvas.height = MOST_PIXELS;
+  const gl = canvas?.getContext("webgl2", { alpha: true, premultipliedAlpha: true, antialias: false, depth: false, stencil: false, preserveDrawingBuffer: false });
+  if (!canvas || !gl) return moveTo("unavailable");
+  canvas.addEventListener("webglcontextlost", (event) => {
+    event.preventDefault();
+    preparing++;
+    renderer = null;
+    moveTo("compiling");
+  });
+  // Everything the context held is gone: made ready again, from the start.
+  canvas.addEventListener("webglcontextrestored", () => run(gl));
+  run(gl);
+}
+
+/** Where the page's shader stands now (`ShaderState`). */
+export const shaderState = () => state;
+
+/** Calls `change` whenever the shader's state changes, and starts making it ready if nothing has yet. Returns a function to stop. */
+export function watchShader(change: () => void) {
+  watchers.add(change);
+  start();
+  return () => {
+    watchers.delete(change);
+  };
+}
+
+/** Draws a figure's scene onto `target` (its own canvas, in device pixels). False when the shader isn't ready (`shaderState`), or the canvas can't be drawn on. */
 export function drawFigure(target: HTMLCanvasElement, scene: FigureScene): boolean {
-  if (renderer === undefined) renderer = create();
   const r = renderer;
-  if (!r || r.gl.isContextLost()) return false;
+  if (!r || state.readiness !== "ready") return false;
+  if (r.gl.isContextLost()) {
+    // Lost before the browser has said so: the figures stand in flat until it's back.
+    moveTo("compiling");
+    return false;
+  }
   let context = contexts.get(target);
   if (context === undefined) {
     context = target.getContext("2d");
@@ -920,12 +1018,4 @@ export function drawFigure(target: HTMLCanvasElement, scene: FigureScene): boole
   context.clearRect(0, 0, target.width, target.height);
   context.drawImage(gl.canvas, 0, MOST_PIXELS - size, size, size, 0, 0, target.width, target.height);
   return true;
-}
-
-/** Calls `redraw` when a lost context comes back, so a figure can draw again. */
-export function onRestored(redraw: () => void) {
-  restored.add(redraw);
-  return () => {
-    restored.delete(redraw);
-  };
 }
