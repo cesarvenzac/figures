@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.3
+
+- The README's loop is sharper: moving shapes no longer leave pixels behind them.
+
 ## 0.1.2
 
 - The README opens on the five shapes going through a day's work: thinking, at work, done.
