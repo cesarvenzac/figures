@@ -3,6 +3,8 @@
 Small figures for the agents in your interface: a cube, a sphere, a pyramid, a block or a cloud,
 really in 3D, with two eyes painted on its face.
 
+[![The five figures, a cube, a sphere, a pyramid, a block and a cloud, in the same mood at once: thinking, the cube solving itself like a Rubik's cube; at work; then done, with stars for eyes as the cube bursts, the sphere splashes, the pyramid launches its capstone, the block spins its dials and the cloud gets a rainbow](https://cesarvenzac.com/media/cc09d32e-8cc1-44a9-afcd-991d62c2aa61.webp)](https://cesarvenzac.com/figures)
+
 They have no mouth, arms or hats. They say everything with their eyes and the way they move, as
 Anki's Cozmo does: lids cut into the eyes for each expression, or the eyes become a shape (^ ^,
 stars, hearts, × ×), the head turning and tipping with them. Each shape has acts of its own: the

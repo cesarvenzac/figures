@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.2
+
+- The README opens on the five shapes going through a day's work: thinking, at work, done.
+
 ## 0.1.1
 
 The first figure on a page no longer holds the page up while its shader compiles.
