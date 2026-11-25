@@ -36,7 +36,7 @@ import { actLoopAt } from "./figure-acts.ts";
 import { easeInOut, span } from "./figure-curves.ts";
 import { drawFigure, MOST_PIXELS, NOT_YET, shaderState, watchShader } from "./figure-gl.ts";
 import { animate } from "./figure-loop.ts";
-import { bodyLoopAt, combine, type LoopAct, loopActAt, moveAt, REST_YAW, stopFor, SWITCH_AT, thinkingAt, THINKING_CYCLE, TURN_BY } from "./figure-motion.ts";
+import { bodyLoopAt, combine, type LoopAct, loopActAt, moveAt, playFor, REST_YAW, stopFor, SWITCH_AT, thinkingAt, THINKING_CYCLE, TURN_BY } from "./figure-motion.ts";
 import { eventToWatch, gazeAt, glanceTarget, type Peer, WATCH_FOR, watchedBy } from "./figure-peers.ts";
 import { blendBody, type Pose, REST } from "./figure-pose.ts";
 import { sceneFor, type SceneInput } from "./figure-scene.ts";
@@ -208,9 +208,10 @@ type Sim = {
  * Its state (`mood`) gives its expression and how it moves, the shape's own act included (the
  * cube's Rubik's turns as it thinks, the block's dials as wheels at work, z's asleep: figure-acts
  * ts); and as its state changes it reacts, the shape its own way: a run finished, it celebrates;
- * failed, it fails; work starting, it gets going; switched off, it dozes off; on again, it wakes.
- * Clicked (`pet`), it's petted, and doesn't open the card it's on. `expression` and `motion` set
- * its face and loop outright (the editor's preview), `play` a move to make now.
+ * failed, it fails; work starting, it gets going; switched off, it dozes off; on again, it wakes;
+ * its finished run seen to, it nods. Clicked (`pet`) while it moves, it's petted, and doesn't open
+ * the card it's on. `expression` and `motion` set its face and loop outright (the editor's
+ * preview), `play` a move to make, once for each `at`.
  *
  * It holds its head as its expression does, blinks, glances, sways, turns toward the pointer on a
  * desktop (`look`; every figure but a switched-off one), looks at the others on the page when one
@@ -254,7 +255,7 @@ export function AgentFigure({
   expression?: Expression;
   /** A loop to move in, in place of its state's. */
   motion?: Motion;
-  /** A move to make now; a new `play.at` makes it again. */
+  /** A move to make, once for each `at` (a new `at` or `motion` makes it again); one asked for while it holds still waits until it moves. */
   play?: { motion: Motion; at: number };
   size?: number;
   look?: boolean;
@@ -634,15 +635,6 @@ export function AgentFigure({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [moving, ready, generation, broken, expression, figure.shape, figure.habit, paint, energy.speed, energy.amp, off, pixels, drain]);
 
-  // A move asked for from outside, as it arrives.
-  useEffect(() => {
-    if (play && moving && ONCE.includes(play.motion as Once)) {
-      start(play.motion as Once);
-      if (play.motion === "pet" || play.motion === "celebrate" || play.motion === "fail") announce(peerId.current);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [play, moving]);
-
   // Its state's move, now and then (a pleased figure turns into a star for a beat).
   useEffect(() => {
     if (!moving || !state.now || asked) return;
@@ -759,6 +751,22 @@ export function AgentFigure({
     const peer = peers.get(peerId.current);
     if (peer) peer.mood = mood;
   }, [mood]);
+
+  // A move asked for from outside, as it arrives: once for each `at`, read by what it says (an
+  // inline `play` is a new object every render), and not again as the figure comes back on screen;
+  // one asked for while it isn't moving waits until it is. After the figure joins the others,
+  // so they turn to its moment.
+  const played = useRef<string | null>(null);
+  const playMotion = play?.motion;
+  const playAt = play?.at;
+  useEffect(() => {
+    const next = playFor(playMotion === undefined || playAt === undefined ? undefined : { motion: playMotion, at: playAt }, moving, played.current);
+    played.current = next.played;
+    if (!next.start) return;
+    start(next.start);
+    if (next.start === "pet" || next.start === "celebrate" || next.start === "fail") announce(peerId.current);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [playMotion, playAt, moving]);
 
   // Petted: clicked, it's petted (and the card it's on doesn't open); dragged where `grab` is on,
   // it turns with the pointer and springs home when let go.

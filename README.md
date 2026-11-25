@@ -51,10 +51,13 @@ What the agent it stands for is doing. Each mood has its expression and its loop
 | `trouble` | In trouble: squeezed eyes, worrying, shaking now and then |
 | `sleep` | Switched off: eyes shut, grey and dim, z's |
 
-As the mood changes it reacts (`reactionTo(from, to)` says which): to `happy`, it celebrates (the
-cube bursts and snaps back, the sphere splashes, the pyramid launches its capstone, the block
-spins its dials like a slot machine, the cloud gets a rainbow); to `trouble`, it fails; into work,
-it gets going; to `sleep`, it dozes off, and back, it wakes.
+As the mood changes it reacts (`reactionTo(from, to)` says which): to `sleep`, it dozes off, and
+from `sleep` to any other mood, it wakes; to `happy`, it celebrates (the cube bursts and snaps back,
+the sphere splashes, the pyramid launches its capstone, the block spins its dials like a slot
+machine, the cloud gets a rainbow); to `trouble`, it fails; into work (`thinking` or `working`,
+from neither), it gets going; and from `happy` back to `idle`, its finished run seen to, it nods.
+Between `thinking` and `working`, or to `idle` from `thinking`, `working` or `trouble`, it carries
+on without one.
 
 ## `AgentFigure`
 
@@ -72,13 +75,31 @@ it gets going; to `sleep`, it dozes off, and back, it wakes.
 />
 ```
 
+`look`, `react`, `pet` and `grab` work only while it moves: with `still`, under reduced motion and
+while it's off screen, a hover does nothing, it can't be turned, and a click isn't caught, so the
+link it's in opens as it would without it. Asleep (`sleep`), it doesn't look at the pointer or
+smile at a hover, and a click is caught but doesn't pet it.
+
 To set it outright rather than by mood: `expression` (one of `EXPRESSIONS`: `neutral`, `happy`,
 `sad`, `tired`, `thinking`, `working`, `listening`, `speaking`, `sleeping`, `surprised`,
 `trouble`, `love`, `excited`, `failed`) and `motion` (a loop to move in, one of `LOOPS`). `play`
-makes a move now, again whenever its `at` changes:
+makes a move once, and again whenever its `at` changes (or its `motion`): not as the page renders
+again, nor as the figure comes back on screen. One asked for while the figure holds still waits
+until it moves. Keep it in state and set it when the move is wanted:
 
 ```tsx
-<AgentFigure figure={ada} play={{ motion: "spin", at: Date.now() }} />
+import { useState } from "react";
+import type { Once } from "@cesarvenzac/figures";
+
+function Ada() {
+  const [play, setPlay] = useState<{ motion: Once; at: number }>();
+  return (
+    <>
+      <AgentFigure figure={ada} play={play} />
+      <button onClick={() => setPlay({ motion: "spin", at: Date.now() })}>Spin</button>
+    </>
+  );
+}
 ```
 
 The moves are `MOVES` (`hop`, `bounce`, `spin`, `turn`, `flip`, `nod`, `shake`, `wave`, `pop`,

@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { MOVES, ONCE, REACTIONS, SHAPES } from "./figure.ts";
 import { arc, bump, easeOutBack, keys, span } from "./figure-curves.ts";
-import { bodyLoopAt, combine, type LoopAct, loopActAt, loopAt, moveAt, quantumOf, REST, stopFor, SWITCH_AT, THINKING, THINKING_CYCLE, thinkingAt, TURN_BY } from "./figure-motion.ts";
+import { type Asked, bodyLoopAt, combine, type LoopAct, loopActAt, loopAt, moveAt, playFor, quantumOf, REST, stopFor, SWITCH_AT, THINKING, THINKING_CYCLE, thinkingAt, TURN_BY } from "./figure-motion.ts";
 import type { Pose } from "./figure-pose.ts";
 import { applyMove, isSolved, solved } from "./rubik.ts";
 
@@ -180,5 +180,39 @@ describe("figure motion", () => {
     expect(Math.max(...Array.from({ length: 50 }, (_, i) => easeOutBack(i / 49)))).toBeGreaterThan(1);
     expect(keys(0.5, [[0, 0], [1, 10]])).toBeCloseTo(5);
     expect(keys(-1, [[0, 3], [1, 10]])).toBe(3);
+  });
+});
+
+describe("a move asked for from outside", () => {
+  it("starts once for each `at`, however often it's asked in the same words or the figure stops and starts moving", () => {
+    // As AgentFigure asks: what it played last kept from one look to the next.
+    let played: string | null = null;
+    const look = (play: Asked | undefined, moving: boolean) => {
+      const next = playFor(play, moving, played);
+      played = next.played;
+      return next.start;
+    };
+    expect(look({ motion: "spin", at: 1 }, true)).toBe("spin");
+    // Asked again in the same words, as an inline `play` is on every render: nothing.
+    expect(look({ motion: "spin", at: 1 }, true)).toBeNull();
+    // Off screen and back: nothing.
+    expect(look({ motion: "spin", at: 1 }, false)).toBeNull();
+    expect(look({ motion: "spin", at: 1 }, true)).toBeNull();
+    // A new `at` plays it again, and a new move at the same moment too.
+    expect(look({ motion: "spin", at: 2 }, true)).toBe("spin");
+    expect(look({ motion: "hop", at: 2 }, true)).toBe("hop");
+    // Asked while it isn't moving, it waits until it is, a newer one taking its place.
+    expect(look({ motion: "nod", at: 3 }, false)).toBeNull();
+    expect(look({ motion: "pet", at: 4 }, false)).toBeNull();
+    expect(look({ motion: "pet", at: 4 }, true)).toBe("pet");
+    expect(look({ motion: "pet", at: 4 }, true)).toBeNull();
+    // Nothing asked for a while, then the same again: still nothing.
+    expect(look(undefined, true)).toBeNull();
+    expect(look({ motion: "pet", at: 4 }, true)).toBeNull();
+    // A loop isn't a move to make, and it isn't made later either.
+    expect(look({ motion: "work", at: 5 }, true)).toBeNull();
+    expect(look({ motion: "work", at: 5 }, true)).toBeNull();
+    // Every move and reaction can be asked for.
+    for (const [k, motion] of ONCE.entries()) expect(look({ motion, at: 10 + k }, true)).toBe(motion);
   });
 });

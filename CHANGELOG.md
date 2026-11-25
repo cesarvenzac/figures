@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.4
+
+- `play` makes its move once for each `at`, as its docs said. It went by the object, so a `play` written inline started the move again on every render, and the last one played again whenever the figure came back on screen or the tab came back. One asked for while the figure holds still plays once it moves, as before, and the other figures now turn to look as they do at any other.
+- The README's example keeps `play` in state, set when the move is wanted. It also says that `look`, `react`, `pet` and `grab` work only while the figure moves, and lists every reaction `reactionTo` plays, the nod from `happy` back to `idle` among them.
+
 ## 0.1.3
 
 - The README's loop is sharper: moving shapes no longer leave pixels behind them.

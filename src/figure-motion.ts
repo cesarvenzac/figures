@@ -1,4 +1,4 @@
-import { type Loop, type Once, REACTIONS, type Reaction, type Shape } from "./figure.ts";
+import { type Loop, type Motion, ONCE, type Once, REACTIONS, type Reaction, type Shape } from "./figure.ts";
 import { actAt, actLoopAt, ENVELOPE, QUANTUM } from "./figure-acts.ts";
 import { arc, bump, clamp01, easeInOut, easeOut, easeOutBack, into, keys, span, wobble } from "./figure-curves.ts";
 import { combine, type Pose, REST } from "./figure-pose.ts";
@@ -26,6 +26,23 @@ export const TURN_BY: Record<Shape, number> = { cube: 90, sphere: 0, pyramid: 90
 export const SWITCH_AT = 0.45;
 
 const isReaction = (move: Once): move is Reaction => (REACTIONS as readonly string[]).includes(move);
+
+/** A move asked for from outside (AgentFigure's `play`): which, and the moment that asks for it. */
+export type Asked = { motion: Motion; at: number };
+
+/**
+ * What a move asked for from outside starts: `play` once for each `at` (or `motion`), never again
+ * for the same one, however often it's asked in the same words or the figure stops and starts
+ * moving; one asked for while it isn't moving waits until it is, and a newer one asked meanwhile
+ * takes its place. `played` is the answer's `played` from the last look, kept for the next;
+ * `start` is null when there's nothing to start, or when the motion is a loop rather than a move.
+ */
+export function playFor(play: Asked | undefined, moving: boolean, played: string | null): { start: Once | null; played: string | null } {
+  if (!play || !moving) return { start: null, played };
+  const key = `${play.motion}@${play.at}`;
+  if (key === played) return { start: null, played };
+  return { start: (ONCE as readonly string[]).includes(play.motion) ? (play.motion as Once) : null, played: key };
+}
 
 // ---------------------------------------------------------------------------------------------
 // Moves
